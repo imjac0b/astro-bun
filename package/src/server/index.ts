@@ -190,10 +190,19 @@ function appendForwardSlash(pth: string): string {
   return pth.endsWith('/') ? pth : `${pth}/`;
 }
 
+function resolveServerDir(options: Options): string {
+  const serverFolder = path.basename(options.server!);
+  let serverEntryFolderURL = path.dirname(import.meta.url);
+  while (!serverEntryFolderURL.endsWith(serverFolder)) {
+    serverEntryFolderURL = path.dirname(serverEntryFolderURL);
+  }
+  return serverEntryFolderURL;
+}
+
 async function loadStaticHeaders(options: Options): Promise<StaticHeaders | null> {
   try {
-    const clientDir = resolveClientDir(options);
-    const headersPath = path.join(clientDir, 'static-headers.json');
+    const serverDir = resolveServerDir(options);
+    const headersPath = path.join(serverDir, 'static-headers.json');
     const content = await readFile(headersPath, 'utf8');
     return JSON.parse(content) as StaticHeaders;
   } catch {

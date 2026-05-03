@@ -103,7 +103,7 @@ export default function integration(options?: Options): AstroIntegration {
 
         const { writeFile } = await import('node:fs/promises');
         await writeFile(
-          new URL('./static-headers.json', dir),
+          new URL('./static-headers.json', new URL('./server/', dir)),
           JSON.stringify(headersContent, null, 2),
           'utf8',
         );
