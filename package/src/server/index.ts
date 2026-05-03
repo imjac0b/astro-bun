@@ -1,7 +1,7 @@
 /// <reference types="astro/client" />
 
 import cluster from 'node:cluster';
-import { readdir } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import url from 'node:url';
@@ -12,6 +12,10 @@ import type { Server } from 'bun';
 
 import { extractHostname, serveStaticFile } from '~/server/utils';
 import type { CreateExports, Options } from '~/types';
+
+interface StaticHeaders {
+  [route: string]: Record<string, string>;
+}
 
 export function createExports(manifest: SSRManifest, options: Options): CreateExports {
   return {
@@ -85,43 +89,58 @@ function handler(
 
   const app = new App(manifest);
 
-  // The dist may be copied somewhere after building.
-  // The build environment's full client path (options.client) can't be relied on in production.
-  // `resolveClientDir()` finds the full path to the client directory in the current environment.
   const clientDir = resolveClientDir(options);
 
   const clientAssetsPromise = getStaticAssets(clientDir);
   let clientAssets: Awaited<typeof clientAssetsPromise> | undefined;
 
+  const staticHeadersPromise = loadStaticHeaders(options);
+  let staticHeaders: Awaited<typeof staticHeadersPromise> | undefined;
+
   return async (req: Request, server: Server<undefined>): Promise<Response> => {
     const routeData = app.match(req);
+
+    const url = new URL(req.url);
+
+    if (!staticHeaders) staticHeaders = await staticHeadersPromise;
+
     if (!routeData) {
-      const url = new URL(req.url);
       if (!clientAssets) clientAssets = await clientAssetsPromise;
       const staticAssetExists = clientAssets.has(url.pathname);
 
-      // If the manifest asset doesn't exist, or the request url ends with a slash
-      // we should serve the index.html file from the respective directory.
       if (!staticAssetExists || req.url.endsWith('/')) {
         const localPath = new URL(
           `./${app.removeBase(url.pathname)}/index.html`,
           clientRoot,
         );
-        return serveStaticFile(url.pathname, localPath, clientRoot, options);
+        const response = await serveStaticFile(
+          url.pathname,
+          localPath,
+          clientRoot,
+          options,
+        );
+        return applyStaticHeaders(response, url.pathname, staticHeaders);
       }
 
-      // Otherwise we attempt to serve the static asset from the client directory.
       if (staticAssetExists) {
         const localPath = new URL(app.removeBase(url.pathname), clientRoot);
-        return serveStaticFile(url.pathname, localPath, clientRoot, options);
+        const response = await serveStaticFile(
+          url.pathname,
+          localPath,
+          clientRoot,
+          options,
+        );
+        return applyStaticHeaders(response, url.pathname, staticHeaders);
       }
     }
 
-    return app.render(req, {
+    const response = await app.render(req, {
       addCookieHeader: true,
       clientAddress: server.requestIP(req)?.address,
       routeData,
     });
+
+    return applyStaticHeaders(response, url.pathname, staticHeaders);
   };
 }
 
@@ -169,4 +188,36 @@ function prependForwardSlash(pth: string): string {
 
 function appendForwardSlash(pth: string): string {
   return pth.endsWith('/') ? pth : `${pth}/`;
+}
+
+async function loadStaticHeaders(options: Options): Promise<StaticHeaders | null> {
+  try {
+    const clientDir = resolveClientDir(options);
+    const headersPath = path.join(clientDir, 'static-headers.json');
+    const content = await readFile(headersPath, 'utf8');
+    return JSON.parse(content) as StaticHeaders;
+  } catch {
+    return null;
+  }
+}
+
+function applyStaticHeaders(
+  response: Response,
+  route: string,
+  headers: StaticHeaders | null | undefined,
+): Response {
+  if (!headers || !headers[route]) return response;
+
+  const routeHeaders = headers[route];
+  const newHeaders = new Headers(response.headers);
+
+  for (const [key, value] of Object.entries(routeHeaders)) {
+    newHeaders.set(key, value);
+  }
+
+  return new Response(response.body, {
+    headers: newHeaders,
+    status: response.status,
+    statusText: response.statusText,
+  });
 }

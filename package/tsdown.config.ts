@@ -6,6 +6,7 @@ export default defineConfig(({ watch = false }) => ({
   entry: {
     index: 'src/index.ts',
     server: 'src/server/index.ts',
+    middleware: 'src/middleware.ts',
   },
   format: 'esm',
   splitting: false,

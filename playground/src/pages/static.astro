@@ -1,5 +1,7 @@
 ---
 export const prerender = true;
+Astro.response.headers.set('Cache-Control', 'public, max-age=3600');
+Astro.response.headers.set('X-Custom-Header', 'test-value');
 ---
 
 <html lang="en">
